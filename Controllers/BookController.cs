@@ -1,27 +1,21 @@
-using System.Threading.Tasks;
-using AspNetAngularAuth.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using SecureWebApp.Models;
 
-namespace AspNetAngularAuth.Controllers
+namespace SecureWebApp.Controllers;
+
+[Authorize]
+[ApiController]
+[Route("api/[controller]")]
+public class BookController(AppDbContext context) : ControllerBase
 {
-    [Authorize]
-    [Route("api/[controller]")]
-    [ApiController]
-    public class BookController: ControllerBase
-    {
-        private readonly BookStoreContext _context;
-        public BookController(BookStoreContext context)
-        {
-            _context = context;
-        }
+    private readonly AppDbContext _context = context;
 
-        [HttpGet]
-        public async Task<IActionResult> GetBooks()
-        {
-            var data = await _context.TblBook.ToListAsync();
-            return Ok(data);
-        }
+    [HttpGet]
+    public async Task<IActionResult> GetBooks()
+    {
+        var data = await _context.Books.ToListAsync();
+        return Ok(data);
     }
 }

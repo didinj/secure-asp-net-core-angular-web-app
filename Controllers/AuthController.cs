@@ -1,72 +1,58 @@
-using System;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using SecureWebApp.DTOs;
+using SecureWebApp.Models;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using System.Threading.Tasks;
-using AspNetAngularAuth.Dtos;
-using AspNetAngularAuth.Models;
-using AspNetAngularAuth.Repositories;
-using AutoMapper;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using Microsoft.IdentityModel.Tokens;
 
-namespace AspNetAngularAuth.Controllers
+namespace SecureWebApp.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class AuthController(AppDbContext context, IConfiguration config) : ControllerBase
 {
-    [Route("api/[controller]")]
-    [ApiController]
-    public class AuthController: ControllerBase
+    private readonly AppDbContext _context = context;
+    private readonly IConfiguration _config = config;
+
+    [HttpPost("register")]
+    public async Task<IActionResult> Register(RegisterDto registerDto)
     {
-        private readonly IAuthRepository _repo;
-        private readonly IConfiguration _config;
-        private readonly IMapper _mapper;
-
-        public AuthController(IAuthRepository repo, IConfiguration config, IMapper mapper)
+        var user = new User
         {
-            _mapper = mapper;
-            _config = config;
-            _repo = repo;
-        }
+            FullName = registerDto.FullName,
+            Email = registerDto.Email,
+            Username = registerDto.Username,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password)
+        };
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        return Ok();
+    }
 
-        [HttpPost("register")]
-        public async Task<IActionResult> Register(RegisterDto registerDto)
+    [HttpPost("login")]
+    public IActionResult Login(LoginDto userDto)
+    {
+        var user = _context.Users.SingleOrDefault(u => u.Username == userDto.Username);
+        if (user == null || !BCrypt.Net.BCrypt.Verify(userDto.Password, user.PasswordHash))
+            return Unauthorized();
+
+        var token = GenerateJwtToken(user);
+        return Ok(new { token });
+    }
+
+    private string GenerateJwtToken(User user)
+    {
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var key = Encoding.UTF8.GetBytes(_config["Jwt:Key"]!);
+        var tokenDescriptor = new SecurityTokenDescriptor
         {
-            registerDto.Email = registerDto.Email.ToLower();
-            if (await _repo.UserExists(registerDto.Email))
-                return BadRequest("Email already exists");
-
-            var userToCreate = _mapper.Map<TblUser>(registerDto);
-            var createdUser = await _repo.Register(userToCreate, registerDto.Password);
-            return StatusCode(201, new { email = createdUser.Email, fullname = createdUser.FullName });
-        }
-
-        [HttpPost("login")]
-        public async Task<IActionResult> Login(LoginDto loginDto)
-        {
-            var userFromRepo = await _repo.Login(loginDto.Email.ToLower(), loginDto.Password);
-            if (userFromRepo == null)
-                return Unauthorized();
-
-            var claims = new[]
-            {
-                new Claim(ClaimTypes.NameIdentifier, userFromRepo.UserId.ToString()),
-                new Claim(ClaimTypes.Name, userFromRepo.Email)
-            };
-
-            var key = new SymmetricSecurityKey(Encoding.UTF8
-                .GetBytes(_config.GetSection("AppSettings:Token").Value));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha512Signature);
-            var tokenDescriptor = new SecurityTokenDescriptor
-            {
-                Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.Now.AddDays(1),
-                SigningCredentials = creds
-            };
-
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var token = tokenHandler.CreateToken(tokenDescriptor);
-
-            return Ok(new {token = tokenHandler.WriteToken(token), email = userFromRepo.Email, fullname = userFromRepo.FullName});
-        }
+            Subject = new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, user.Username) }),
+            Expires = DateTime.UtcNow.AddHours(1),
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+        };
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
     }
 }
